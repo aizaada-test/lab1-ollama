@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 5 - LLM with Guardrails and SKILLs</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 16px; background: #f6f7f9; color: #1d1f23; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  h2 { font-size: 1.1rem; margin: 28px 0 8px; }
+  p.sub { color: #5b616b; margin-top: 0; }
+  .card { background: #fff; border: 1px solid #dde1e6; border-radius: 10px; padding: 16px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .85rem; margin: 4px 0 14px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+  label { display: block; font-size: .85rem; color: #5b616b; margin-bottom: 4px; }
+  textarea, button, select { font: inherit; }
+  select { width: 100%; padding: 9px 10px; border: 1px solid #c8cdd3; border-radius: 8px; background: #fff; margin-bottom: 12px; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 80px; padding: 10px; border: 1px solid #c8cdd3; border-radius: 8px; }
+  button { margin-top: 10px; padding: 9px 18px; background: #2459d6; color: #fff; border: 0; border-radius: 8px; cursor: pointer; }
+  button:disabled { background: #9aa8c7; cursor: wait; }
+  button.ghost { background: #fff; color: #2459d6; border: 1px solid #2459d6; margin-left: 8px; }
+  .result { margin-top: 16px; border-radius: 10px; padding: 14px 16px; border-left: 6px solid; display: none; }
+  .badge { display: inline-block; font-weight: 700; font-size: .8rem; padding: 3px 10px; border-radius: 999px; color: #fff; }
+  .model-tag { font-size: .8rem; color: #5b616b; margin-left: 8px; }
+  .answer { white-space: pre-wrap; line-height: 1.5; margin-top: 10px; }
+  .why { font-size: .8rem; color: #5b616b; margin-top: 10px; }
+  .GREEN  { background: #e9f7ec; border-color: #1e8e3e; } .GREEN .badge  { background: #1e8e3e; }
+  .ORANGE { background: #fff4e5; border-color: #e37400; } .ORANGE .badge { background: #e37400; }
+  .RED    { background: #fdecea; border-color: #c5221f; } .RED .badge    { background: #c5221f; }
+  .err { color: #b3261e; margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; background: #fff; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #e6e8eb; vertical-align: top; }
+  th { color: #5b616b; font-weight: 600; }
+  td .badge { font-size: .7rem; padding: 2px 8px; }
+  .empty { color: #8a9099; font-size: .85rem; }
+  .row2 { display: flex; gap: 12px; } .row2 > div { flex: 1; }
+  .skill-desc { font-size: .8rem; color: #5b616b; margin: -6px 0 12px; min-height: 1em; }
+  .skill-tag { display: inline-block; font-size: .75rem; background: #eef1fb; color: #2459d6; border-radius: 999px; padding: 2px 8px; margin-left: 6px; }
+</style>
+</head>
+<body>
+  <h1>Course Assistant with Guardrails &mdash; SKILLs</h1>
+  <p class="sub">Topics: Computer Science, Linux, Cybersecurity &middot; Ollama, CPU only &middot; Pick a model and a skill, ask, compare</p>
+  <div class="card">
+    <div class="legend">
+      <span><span class="dot" style="background:#1e8e3e"></span>Green: course topic</span>
+      <span><span class="dot" style="background:#e37400"></span>Orange: related, not main topic</span>
+      <span><span class="dot" style="background:#c5221f"></span>Red: unsafe or not appropriate</span>
+    </div>
+    <div class="row2">
+      <div><label for="model">Model</label>
+        <select id="model"><option>Loading models...</option></select></div>
+      <div><label for="skill">Skill</label>
+        <select id="skill"><option value="">No skill</option></select></div>
+    </div>
+    <div class="skill-desc" id="skillDesc">No skill: the model answers like in Lab 3.</div>
+    <label for="q">Your question</label>
+    <textarea id="q" placeholder="Example: How does a firewall protect a Linux server?"></textarea>
+    <button id="ask">Ask</button><button id="clear" class="ghost">Clear history</button>
+    <div class="err" id="err"></div>
+    <div class="result" id="result">
+      <span class="badge" id="badge"></span><span class="model-tag" id="modelTag"></span><span class="skill-tag" id="skillTag"></span>
+      <div class="answer" id="answer"></div>
+      <div class="why" id="why"></div>
+    </div>
+  </div>
+
+  <h2>Results history (this browser tab)</h2>
+  <table>
+    <thead><tr><th>#</th><th>Model</th><th>Skill</th><th>Question</th><th>Color</th><th>Decided by</th><th>Time</th></tr></thead>
+    <tbody id="hist"><tr><td colspan="7" class="empty">No questions yet. Ask the same question with and without a skill to compare.</td></tr></tbody>
+  </table>
+<script>
+const LABELS = { GREEN: 'GREEN - Course topic', ORANGE: 'ORANGE - Related topic', RED: 'RED - Blocked' };
+const btn = document.getElementById('ask');
+const box = document.getElementById('result');
+const err = document.getElementById('err');
+const sel = document.getElementById('model');
+const skillSel = document.getElementById('skill');
+const skillDesc = document.getElementById('skillDesc');
+let SKILLS = {};
+const hist = [];
+
+async function loadModels() {
+  try {
+    const d = await (await fetch('/api/models')).json();
+    sel.innerHTML = '';
+    d.models.forEach(m => {
+      const o = document.createElement('option');
+      o.value = m.name;
+      o.textContent = `${m.label}  (${m.name}, ${m.size})` + (m.installed ? '' : '  - not pulled yet');
+      o.disabled = !m.installed;
+      sel.appendChild(o);
+    });
+    const first = d.models.find(m => m.installed);
+    if (first) sel.value = first.name;
+    else err.textContent = 'No lab models are pulled yet. Run "ollama pull llama3.2:1b" in the terminal, then reload this page.';
+  } catch (e) { err.textContent = 'Could not load the model list: ' + e; }
+}
+
+async function loadSkills() {
+  try {
+    const d = await (await fetch('/api/skills')).json();
+    d.skills.forEach(s => {
+      SKILLS[s.name] = s;
+      const o = document.createElement('option');
+      o.value = s.name; o.textContent = s.name;
+      skillSel.appendChild(o);
+    });
+  } catch (e) { err.textContent = 'Could not load the skills: ' + e; }
+}
+skillSel.addEventListener('change', () => {
+  const s = SKILLS[skillSel.value];
+  skillDesc.textContent = s ? `${s.description}  (files: ${s.files.join(', ')}, ${s.size} bytes)` : 'No skill: the model answers like in Lab 3.';
+});
+
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function renderHistory() {
+  const tb = document.getElementById('hist');
+  if (!hist.length) { tb.innerHTML = '<tr><td colspan="7" class="empty">No questions yet. Ask the same question with and without a skill to compare.</td></tr>'; return; }
+  tb.innerHTML = hist.map((h, i) => `<tr><td>${i + 1}</td><td>${esc(h.model)}</td><td>${esc(h.skill || '-')}</td><td>${esc(h.question)}</td>
+    <td><span class="${h.color}"><span class="badge">${h.color}</span></span></td>
+    <td>${h.layer === 'rules' ? 'Layer 1 (rules)' : 'Layer 2 (AI)'}</td><td>${h.seconds} s</td></tr>`).join('');
+}
+
+async function ask() {
+  const question = document.getElementById('q').value.trim();
+  const model = sel.value;
+  const skill = skillSel.value;
+  if (!question || !model) return;
+  btn.disabled = true; sel.disabled = true; skillSel.disabled = true; err.textContent = ''; box.style.display = 'none';
+  btn.textContent = `Checking and thinking with ${model}...`;
+  try {
+    const r = await fetch('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, model, skill }) });
+    const d = await r.json();
+    if (d.error) { err.textContent = d.error; }
+    else {
+      box.className = 'result ' + d.color;
+      document.getElementById('badge').textContent = LABELS[d.color];
+      document.getElementById('modelTag').textContent = 'Model: ' + d.model;
+      document.getElementById('skillTag').textContent = d.skill ? 'Skill: ' + d.skill : (skill && d.color === 'RED' ? 'Skill not used (blocked)' : 'No skill');
+      document.getElementById('answer').textContent = d.answer;
+      document.getElementById('why').textContent =
+        `Why: ${d.reason} | Decided by: ${d.layer === 'rules' ? 'Layer 1 (rules)' : 'Layer 2 (AI classifier)'} | Time: ${d.seconds} s`;
+      box.style.display = 'block';
+      hist.push({ model: d.model, skill: d.skill || (skill ? skill + ' (not used)' : ''), question, color: d.color, layer: d.layer, seconds: d.seconds });
+      renderHistory();
+    }
+  } catch (e) { err.textContent = 'Request failed: ' + e; }
+  btn.disabled = false; sel.disabled = false; skillSel.disabled = false; btn.textContent = 'Ask';
+}
+btn.addEventListener('click', ask);
+document.getElementById('clear').addEventListener('click', () => { hist.length = 0; renderHistory(); });
+document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ask(); });
+loadModels();
+loadSkills();
+</script>
+</body>
+</html>

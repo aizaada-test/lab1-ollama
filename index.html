@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 1 - Ask the LLM</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; background: #f6f7f9; color: #1d1f23; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  p.sub { color: #5b616b; margin-top: 0; }
+  .card { background: #fff; border: 1px solid #dde1e6; border-radius: 10px; padding: 16px; }
+  label { font-size: .85rem; color: #5b616b; }
+  select, textarea, button { font: inherit; }
+  select { padding: 6px; margin: 4px 0 12px; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 90px; padding: 10px; border: 1px solid #c8cdd3; border-radius: 8px; }
+  button { margin-top: 10px; padding: 9px 18px; background: #2459d6; color: #fff; border: 0; border-radius: 8px; cursor: pointer; }
+  button:disabled { background: #9aa8c7; cursor: wait; }
+  #answer { white-space: pre-wrap; margin-top: 16px; line-height: 1.5; }
+  .err { color: #b3261e; }
+  .meta { font-size: .8rem; color: #5b616b; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>Ask the LLM</h1>
+  <p class="sub">A small model running with Ollama inside your GitHub Codespace (CPU only).</p>
+  <div class="card">
+    <label for="model">Model</label><br>
+    <select id="model"><option>loading...</option></select><br>
+    <label for="q">Your question</label>
+    <textarea id="q" placeholder="Example: Explain what a firewall does in 2 sentences."></textarea>
+    <button id="ask">Ask</button>
+    <div id="answer"></div>
+    <div class="meta" id="meta"></div>
+  </div>
+<script>
+const sel = document.getElementById('model');
+const btn = document.getElementById('ask');
+const out = document.getElementById('answer');
+const meta = document.getElementById('meta');
+
+fetch('/api/models').then(r => r.json()).then(d => {
+  sel.innerHTML = '';
+  const list = (d.models && d.models.length) ? d.models : [d.default || 'llama3.2:1b'];
+  list.forEach(m => { const o = document.createElement('option'); o.textContent = m; sel.appendChild(o); });
+  if (d.error) { out.className = 'err'; out.textContent = d.error; }
+}).catch(() => { sel.innerHTML = '<option>llama3.2:1b</option>'; });
+
+async function ask() {
+  const question = document.getElementById('q').value.trim();
+  if (!question) return;
+  btn.disabled = true; out.className = ''; out.textContent = 'Thinking... (a CPU-only model can take 10-60 seconds)';
+  meta.textContent = '';
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, model: sel.value }) });
+    const d = await r.json();
+    if (d.error) { out.className = 'err'; out.textContent = d.error; }
+    else { out.textContent = d.answer; meta.textContent = `Model: ${d.model} | Time: ${((performance.now() - t0) / 1000).toFixed(1)} s`; }
+  } catch (e) { out.className = 'err'; out.textContent = 'Request failed: ' + e; }
+  btn.disabled = false;
+}
+btn.addEventListener('click', ask);
+document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ask(); });
+</script>
+</body>
+</html>
